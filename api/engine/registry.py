@@ -11,6 +11,7 @@ from engine import handlers
 
 REGISTRY = {
     "input": handlers.input_handler,
+    "agent": handlers.agent_handler,
     "branch": handlers.branch_handler,
     "tool": handlers.tool_handler,
     "approval": handlers.approval_handler,

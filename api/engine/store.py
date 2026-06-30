@@ -54,6 +54,16 @@ class Store:
             run = await s.get(Run, run_id)
             run.status = status
 
+    async def get_latest_version(self, graph_id: str) -> GraphVersion | None:
+        async with self.db.session() as s:
+            res = await s.execute(
+                select(GraphVersion)
+                .where(GraphVersion.graph_id == graph_id)
+                .order_by(GraphVersion.version.desc())
+                .limit(1)
+            )
+            return res.scalar_one_or_none()
+
     async def get_definition(self, run_id: str) -> dict:
         """The pinned graph_version definition {nodes, edges} for this run."""
         async with self.db.session() as s:

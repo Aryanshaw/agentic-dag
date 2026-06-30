@@ -6,8 +6,12 @@ Phase 2 ships `input`; branch/tool/approval land in Phase 3, agent in Phase 4.
 
 from __future__ import annotations
 
+from pydantic import ValidationError
+
+from agent.classify import classify
 from engine.graph import outgoing_edges
 from engine.mocks import TOOLS
+from engine.schemas import model_for
 from models import NodeRun
 
 
@@ -20,6 +24,20 @@ async def input_handler(node: NodeRun, inp: dict, store) -> dict:
     run = await store.get_run(node.run_id)
     req = run.request if isinstance(run.request, dict) else {"value": run.request}
     return {**req, "request": run.request}
+
+
+async def agent_handler(node: NodeRun, inp: dict, store) -> dict:
+    """LLM classify → Pydantic-validate BEFORE returning. Invalid → raise → failed."""
+    text = inp.get("text") or ""
+    raw = await classify(text, node.config.get("prompt"))
+    await store.log(node.id, "info", "agent raw output", {"raw": raw})
+    schema = model_for(node.config)  # data-driven: node's own output_schema, or default
+    try:
+        result = schema.model_validate_json(raw)  # strict parse against the node's schema
+    except ValidationError as e:
+        await store.log(node.id, "error", f"invalid agent output: {e}")
+        raise  # → node = failed; downstream deps stay unmet
+    return result.model_dump()
 
 
 async def branch_handler(node: NodeRun, inp: dict, store) -> dict:
