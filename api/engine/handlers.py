@@ -48,7 +48,14 @@ async def tool_handler(node: NodeRun, inp: dict, store) -> dict:
     key = f"{node.run_id}:{node.node_key}"  # stable across retries
     await store.set_idempotency_key(node.id, key)
     tool = TOOLS[node.config["tool"]]
-    result = tool(inp, idem_key=key)
+    # Fault knobs live in the mock (an unreliable external system), opt-in per node.
+    result = tool(
+        inp,
+        idem_key=key,
+        fail_until=node.config.get("fail_until", 0),
+        attempts=fresh.attempts,
+        crash_after=node.config.get("crash_after_create", False),
+    )
     await store.set_output(node.id, result)  # persist before return
     return result
 
