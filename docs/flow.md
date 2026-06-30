@@ -58,12 +58,16 @@ sequenceDiagram
     User->>API: "POST /execute { 'billing question...' }"
     API->>Exec: "step(run)"
     Exec->>Exec: input → done
-    Exec->>Agent: run classify
-    Agent->>LLM: "classify(text)"
-    LLM-->>Agent: raw output
-    Agent->>Agent: "Pydantic validate → {label: 'billing'}"
-    Agent-->>Exec: done
-    Exec->>Exec: branch → mark bug & approval = skipped
+    par classify ∥ fetch_context (parallel off input)
+        Exec->>Agent: run classify
+        Agent->>LLM: "classify(text)"
+        LLM-->>Agent: raw output
+        Agent->>Agent: "Pydantic validate → {label: 'billing'}"
+        Agent-->>Exec: done
+    and
+        Exec->>Exec: "fetch_context → mock account lookup → done"
+    end
+    Exec->>Exec: branch (waits for both) → mark bug & approval = skipped
     Exec->>Tool: "billing → mock invoice (idempotent) + draft reply"
     Tool-->>Exec: done
     Exec->>Exec: final → done
@@ -81,7 +85,7 @@ sequenceDiagram
 
     User->>API: "POST /execute { 'vague request...' }"
     API->>Exec: "step(run)"
-    Exec->>Exec: "input → classify({label: 'unclear'}) → branch"
+    Exec->>Exec: "input → (classify{label:'unclear'} ∥ fetch_context) → branch"
     Note over Exec: bug & billing set skipped
     Exec->>Exec: "approval node → status = awaiting_approval"
     Note over Exec: no ready nodes → loop halts

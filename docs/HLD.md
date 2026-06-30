@@ -83,9 +83,11 @@ holds.
 submit request
   └─ create run + seed nodes (all pending)
   └─ step():
-       input        → done   (request stored in shared state)
-       classify     → done   (LLM → {label}; Pydantic-validated)
-       branch       → done   (reads label; marks 2 of 3 paths "skipped")
+       input            → done   (request stored in shared state)
+       classify ∥ fetch_context  (parallel off input)
+         · classify     → done   (LLM → {label}; Pydantic-validated)
+         · fetch_context→ done   (mock customer/account lookup — task step 3)
+       branch           → done   (waits for both; reads label; marks 2 of 3 paths "skipped")
        bug | billing| approval   (only the chosen one is ready)
          · bug      → mock Linear issue (idempotent) + draft reply → done
          · billing  → mock invoice check (idempotent) + draft reply → done

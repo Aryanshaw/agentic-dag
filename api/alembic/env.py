@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from config.db import Base
+import models  # noqa: F401  — populates Base.metadata for autogenerate
 
 load_dotenv()
 

@@ -168,9 +168,24 @@ nodes + logs (per flow.md).
 approve a pause.
 
 ### Phase 7 — Final: integration + the DAG engine
-**Build:** wire `seeds/support_graph.json` (input→classify→branch→{bug,billing,approval}→final),
-seed one `graphs` + `graph_versions` row on startup, connect Groq agent + all handlers + API
-into the running engine. README + design writeup (HLD §2).
+**Build:** wire `seeds/support_graph.json` — the assignment workflow, **8 nodes**:
+`input → {classify, fetch_context} → branch → {bug, billing, approval} → final`.
+`classify` (agent) and `fetch_context` (tool, mock customer/account lookup = task.pdf step 3)
+run in parallel off `input` and both feed `branch`. Seed one `graphs` + `graph_versions` row
+on startup, connect Groq agent + all handlers + API into the running engine.
+README + design writeup (HLD §2).
+
+Node/edge contract:
+| node | type | deps | condition |
+|------|------|------|-----------|
+| input | input | — | — |
+| classify | agent | input | — |
+| fetch_context | tool | input | — |
+| branch | branch | classify, fetch_context | — |
+| bug | tool | branch | label == bug |
+| billing | tool | branch | label == billing |
+| approval | approval | branch | label == unclear |
+| final | tool | bug, billing, approval | — |
 **How:** end-to-end assembly; the seed graph is the assignment workflow.
 **Test:** `test_scenarios.py` — **the 5 acceptance scenarios, all green:**
 1. **Branching** — billing request → only billing path runs, others `skipped`, run `completed`.
