@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from config.db import Database
-from models import NodeLog, NodeRun, Run
+from models import GraphVersion, NodeLog, NodeRun, Run
 
 # Node state machine (LLD §2). Enforced in set_status.
 ALLOWED_TRANSITIONS: set[tuple[str, str]] = {
@@ -53,6 +53,16 @@ class Store:
         async with self.db.session() as s:
             run = await s.get(Run, run_id)
             run.status = status
+
+    async def get_definition(self, run_id: str) -> dict:
+        """The pinned graph_version definition {nodes, edges} for this run."""
+        async with self.db.session() as s:
+            res = await s.execute(
+                select(GraphVersion.definition)
+                .join(Run, Run.graph_version_id == GraphVersion.id)
+                .where(Run.id == run_id)
+            )
+            return res.scalar_one()
 
     # ── nodes ───────────────────────────────────────────────────────────
     async def create_node(
