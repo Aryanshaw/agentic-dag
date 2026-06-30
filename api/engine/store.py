@@ -87,6 +87,15 @@ class Store:
         async with self.db.session() as s:
             return await s.get(NodeRun, node_id)
 
+    async def get_node_by_key(self, run_id: str, node_key: str) -> NodeRun | None:
+        async with self.db.session() as s:
+            res = await s.execute(
+                select(NodeRun).where(
+                    NodeRun.run_id == run_id, NodeRun.node_key == node_key
+                )
+            )
+            return res.scalar_one_or_none()
+
     async def set_status(self, node_id: str, status: str) -> None:
         async with self.db.session() as s:
             node = await s.get(NodeRun, node_id)
