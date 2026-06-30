@@ -1,4 +1,4 @@
-"""Async PostgreSQL database setup using SQLAlchemy."""
+"""SQLite database setup using SQLAlchemy async."""
 
 import os
 from contextlib import asynccontextmanager
@@ -33,6 +33,8 @@ class Database:
     async def init(self) -> None:
         try:
             async with self.engine.begin() as conn:
+                await conn.execute(text("PRAGMA journal_mode=WAL"))
+                await conn.execute(text("PRAGMA foreign_keys=ON"))
                 await conn.execute(text("SELECT 1"))
                 logger.info("Database connection verified.")
                 await conn.run_sync(Base.metadata.create_all)

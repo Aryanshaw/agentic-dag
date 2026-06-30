@@ -39,6 +39,11 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# sqlite databases
+*.db
+*.db-wal
+*.db-shm
+
 # env files
 .env*
 .env
@@ -49,3 +54,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+task.pdf

@@ -1,5 +1,5 @@
 {
-  "name": "tvaram",
+  "name": "agentic-dag",
   "private": true,
   "scripts": {
     "dev": "concurrently -n api,client -c blue,green \"uv --directory api run uvicorn main:app --host 127.0.0.1 --port 8000 --reload\" \"pnpm --filter frontend dev\"",
