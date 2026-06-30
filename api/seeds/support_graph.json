@@ -1,0 +1,38 @@
+{
+  "name": "Customer Support Triage",
+  "nodes": [
+    { "key": "input", "type": "input" },
+    {
+      "key": "classify",
+      "type": "agent",
+      "config": {
+        "output_schema": {
+          "label": { "type": "enum", "values": ["bug", "billing", "unclear"], "required": true },
+          "reply": { "type": "str", "required": false }
+        }
+      }
+    },
+    { "key": "fetch_context", "type": "tool", "config": { "tool": "context" } },
+    { "key": "branch", "type": "branch" },
+    { "key": "bug", "type": "tool", "config": { "tool": "linear" } },
+    { "key": "billing", "type": "tool", "config": { "tool": "invoice" } },
+    { "key": "approval", "type": "approval" },
+    { "key": "final", "type": "input" }
+  ],
+  "edges": [
+    { "source": "input", "target": "classify", "sourceHandle": "text", "targetHandle": "text" },
+    { "source": "input", "target": "fetch_context", "sourceHandle": "text", "targetHandle": "text" },
+    { "source": "classify", "target": "branch", "sourceHandle": "label", "targetHandle": "label" },
+    { "source": "fetch_context", "target": "branch", "sourceHandle": "account", "targetHandle": "account" },
+    { "source": "fetch_context", "target": "bug", "sourceHandle": "account", "targetHandle": "account" },
+    { "source": "fetch_context", "target": "billing", "sourceHandle": "account", "targetHandle": "account" },
+    { "source": "branch", "target": "bug", "sourceHandle": "label", "targetHandle": "label", "condition": "bug" },
+    { "source": "branch", "target": "billing", "sourceHandle": "label", "targetHandle": "label", "condition": "billing" },
+    { "source": "branch", "target": "approval", "sourceHandle": "label", "targetHandle": "label", "condition": "unclear" },
+    { "source": "input", "target": "bug", "sourceHandle": "text", "targetHandle": "text" },
+    { "source": "input", "target": "billing", "sourceHandle": "text", "targetHandle": "text" },
+    { "source": "bug", "target": "final", "sourceHandle": "reply", "targetHandle": "reply" },
+    { "source": "billing", "target": "final", "sourceHandle": "reply", "targetHandle": "reply" },
+    { "source": "approval", "target": "final", "sourceHandle": "reply", "targetHandle": "reply" }
+  ]
+}

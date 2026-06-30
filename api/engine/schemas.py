@@ -11,8 +11,6 @@ Field spec (per key):
 
 from __future__ import annotations
 
-import json
-from functools import lru_cache
 from typing import Literal
 
 from pydantic import BaseModel, create_model
@@ -37,16 +35,10 @@ def _field(spec: dict):
     return (typ | None, None)
 
 
-@lru_cache(maxsize=128)
-def _build_cached(spec_json: str) -> type[BaseModel]:
-    spec = json.loads(spec_json)
+def build_model(spec: dict) -> type[BaseModel]:
+    """Build a Pydantic model from a JSON field spec."""
     fields = {name: _field(fs) for name, fs in spec.items()}
     return create_model("AgentOutput", **fields)
-
-
-def build_model(spec: dict) -> type[BaseModel]:
-    """Build (and cache) a Pydantic model from a JSON field spec."""
-    return _build_cached(json.dumps(spec, sort_keys=True))
 
 
 def model_for(config: dict) -> type[BaseModel]:

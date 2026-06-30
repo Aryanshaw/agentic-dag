@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from config.db import Database
-from models import GraphVersion, NodeLog, NodeRun, Run
+from models import Graph, GraphVersion, NodeLog, NodeRun, Run
 
 # Node state machine (LLD §2). Enforced in set_status.
 ALLOWED_TRANSITIONS: set[tuple[str, str]] = {
@@ -53,6 +53,11 @@ class Store:
         async with self.db.session() as s:
             run = await s.get(Run, run_id)
             run.status = status
+
+    async def list_graphs(self) -> list[Graph]:
+        async with self.db.session() as s:
+            res = await s.execute(select(Graph).order_by(Graph.created_at))
+            return list(res.scalars().all())
 
     async def get_latest_version(self, graph_id: str) -> GraphVersion | None:
         async with self.db.session() as s:

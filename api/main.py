@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config.db import DATABASE_URL, Database
 from config.logger import get_logger
+from engine.seed import seed_support_graph
 from routers.runs import router as runs_router
 
 logger = get_logger(__name__)
@@ -18,6 +19,7 @@ async def lifespan(app: FastAPI):
     db = Database(DATABASE_URL)
     await db.init()
     app.state.db = db
+    await seed_support_graph(db)
     logger.info("REST API startup complete.")
     yield
     await db.close()

@@ -19,12 +19,14 @@ class ExternalToolError(RuntimeError):
 
 _issues: dict[str, dict] = {}  # idem_key -> result
 _invoices: dict[str, dict] = {}
+_contexts: dict[str, dict] = {}
 _created: list[str] = []  # idem_keys for which a NEW side-effect actually fired
 
 
 def reset() -> None:  # test helper
     _issues.clear()
     _invoices.clear()
+    _contexts.clear()
     _created.clear()
 
 
@@ -73,7 +75,22 @@ def mock_check_invoice(inp, idem_key, fail_until=0, attempts=0, crash_after=Fals
     )
 
 
+def mock_fetch_context(inp, idem_key, fail_until=0, attempts=0, crash_after=False):
+    return _run(
+        _contexts,
+        idem_key,
+        lambda: {
+            "account": {"id": "ACC-42", "plan": "pro", "tickets_open": 1},
+            "customer": "Jane Doe",
+        },
+        fail_until,
+        attempts,
+        crash_after,
+    )
+
+
 TOOLS = {
     "linear": mock_create_linear_issue,
     "invoice": mock_check_invoice,
+    "context": mock_fetch_context,
 }

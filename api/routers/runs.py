@@ -49,6 +49,12 @@ async def _run_response(run_id: str, store: Store) -> dict:
 
 
 # ── endpoints ────────────────────────────────────────────────────────────
+@router.get("/graphs")
+async def list_graphs(store: Store = Depends(get_store)) -> list[dict]:
+    graphs = await store.list_graphs()
+    return [{"id": g.id, "name": g.name, "latest_version": g.latest_version} for g in graphs]
+
+
 @router.post("/runs/execute/{graph_id}")
 async def execute(graph_id: str, body: dict, store: Store = Depends(get_store)) -> dict:
     version = await store.get_latest_version(graph_id)
