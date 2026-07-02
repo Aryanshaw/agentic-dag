@@ -21,9 +21,13 @@ pnpm install                 # frontend deps
 ```
 
 ### Environment (`api/.env`)
+Copy the template and fill in your key:
+```bash
+cp api/.env.example api/.env
+```
 ```
 DATABASE_URL=sqlite+aiosqlite:///./local.db
-GROQ_API_KEY=gsk_...         # required: the agent makes real Groq calls
+GROQ_API_KEY=gsk_...         # required: the agent nodes make real Groq calls
 ```
 
 ### Database
@@ -32,7 +36,20 @@ uv --directory api run alembic upgrade head
 ```
 The support-triage graph is **seeded automatically on API startup** (idempotent).
 
+> **Resetting the DB:** the seed is idempotent *by graph name*, so it won't update an
+> already-seeded definition. To pick up a changed seed, drop the SQLite files and
+> re-migrate — use the glob so the WAL/SHM sidecars go too:
+> ```bash
+> rm -f api/local.db* && uv --directory api run alembic upgrade head
+> ```
+
 ## Running
+
+**Quickest:** `./start.sh` — installs deps, migrates, and launches API + client in one go
+(seeds on startup). It bootstraps `api/.env` from the template on first run and stops so you
+can paste your `GROQ_API_KEY`.
+
+Or manually:
 ```bash
 pnpm dev          # API :8000 + client :3000
 pnpm dev:api      # API only  → http://localhost:8000
@@ -64,10 +81,16 @@ The full rationale is the decision table in [HLD §2](docs/HLD.md); the load-bea
 | **Agent output is schema-as-data** | The node carries its output schema as JSON; a Pydantic validator is built at runtime and validates **before** any downstream node runs. Invalid → node `failed`, downstream blocked. |
 | **No queue/worker/daemon** | `step()` runs inline per request (submit/retry/approve). A run "pauses" simply because no endpoint is calling `step()`. |
 
+For a guided, intern-friendly tour see **[ARCHITECTURE.md](ARCHITECTURE.md)**; for the
+API→function→DAG code flow with diagrams open **[docs/code-flow-report.html](docs/code-flow-report.html)**.
+
 ### How a run flows
-`input → classify (LLM, validated) → branch → {bug | billing | approval} → final`.
-The executor runs every node whose deps are all `done|skipped`, persists each result,
-and stops when blocked (awaiting approval), failed, or complete. Node lifecycle:
+`input → {classify (LLM, validated), fetch_context (tool)} → branch → {bug | billing | approval} → final`.
+`classify` and `fetch_context` run in parallel off `input` and both feed `branch`. `final`
+is itself an **agent** node: it takes the run context (label, account, winning branch's
+result) and the LLM composes the customer reply. The executor runs every node whose deps
+are all `done|skipped`, persists each result, and stops when blocked (awaiting approval),
+failed, or complete. Node lifecycle:
 `pending → running → done | failed | skipped | awaiting_approval`, with `failed→pending`
 (retry) and `awaiting_approval→done|failed` (approve/reject) as the resume edges.
 

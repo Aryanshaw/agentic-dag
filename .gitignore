@@ -45,7 +45,6 @@ yarn-error.log*
 *.db-shm
 
 # env files
-.env*
 .env
 
 # vercel
