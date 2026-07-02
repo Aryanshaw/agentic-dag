@@ -21,10 +21,18 @@ export type Node = {
   attempts: number;
   logs: NodeLog[];
 };
-export type Run = { id: string; status: string; request: unknown; nodes: Node[] };
+export type Edge = { source: string; target: string; condition?: string };
+export type Run = { id: string; status: string; request: unknown; nodes: Node[]; edges: Edge[] };
 export type Graph = { id: string; name: string; latest_version: number };
+export type GraphDef = {
+  id: string;
+  name: string;
+  nodes: { key: string; type: string }[];
+  edges: Edge[];
+};
 
 export const listGraphs = (): Promise<Graph[]> => j("/graphs");
+export const getGraphDef = (id: string): Promise<GraphDef> => j(`/graphs/${id}`);
 export const execute = (graphId: string, text: string): Promise<Run> =>
   j(`/runs/execute/${graphId}`, { method: "POST", body: JSON.stringify({ request: { text } }) });
 export const getRun = (id: string): Promise<Run> => j(`/runs/${id}`);

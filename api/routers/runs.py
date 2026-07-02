@@ -45,7 +45,9 @@ async def _run_response(run_id: str, store: Store) -> dict:
     run = await store.get_run(run_id)
     if run is None:
         raise HTTPException(404, "run not found")
-    return _run_dict(run)
+    d = _run_dict(run)
+    d["edges"] = (await store.get_definition(run_id)).get("edges", [])  # topology for the UI
+    return d
 
 
 # ── endpoints ────────────────────────────────────────────────────────────
@@ -53,6 +55,15 @@ async def _run_response(run_id: str, store: Store) -> dict:
 async def list_graphs(store: Store = Depends(get_store)) -> list[dict]:
     graphs = await store.list_graphs()
     return [{"id": g.id, "name": g.name, "latest_version": g.latest_version} for g in graphs]
+
+
+@router.get("/graphs/{graph_id}")
+async def get_graph(graph_id: str, store: Store = Depends(get_store)) -> dict:
+    version = await store.get_latest_version(graph_id)
+    if version is None:
+        raise HTTPException(404, "graph not found")
+    d = version.definition
+    return {"id": graph_id, "name": d.get("name", ""), "nodes": d["nodes"], "edges": d["edges"]}
 
 
 @router.post("/runs/execute/{graph_id}")
@@ -97,6 +108,7 @@ async def approve(node_id: str, store: Store = Depends(get_store)) -> dict:
     if node.status != "awaiting_approval":
         raise HTTPException(409, f"node is not awaiting approval (is {node.status})")
     await store.set_status(node.id, "done")  # awaiting_approval → done
+    await store.set_output(node.id, {"reply": "Approved by reviewer — routing to a human agent."})
     await store.log(node.id, "info", "approved")
     await step(node.run_id, store)
     return await _run_response(node.run_id, store)

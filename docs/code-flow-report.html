@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agentic DAG — Code Flow Report</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "dark",
+    themeVariables: {
+      background: "#0f1117",
+      primaryColor: "#1a1d27",
+      primaryBorderColor: "#4f46e5",
+      lineColor: "#64748b",
+      fontFamily: "ui-monospace, monospace",
+    },
+    sequence: { useMaxWidth: true },
+    flowchart: { useMaxWidth: true },
+  });
+</script>
+<style>
+  body { background:#0f1117; color:#e2e8f0; }
+  .card { background:#1a1d27; border:1px solid #2a2f3d; border-radius:14px; }
+  .mermaid { background:#12141c; border-radius:10px; padding:14px; }
+  code, pre { font-family: ui-monospace, monospace; }
+  pre { background:#0b0d13; border:1px solid #2a2f3d; border-radius:10px; padding:12px; overflow:auto; font-size:12.5px; }
+  .kbd { background:#0b0d13; border:1px solid #2a2f3d; border-radius:6px; padding:1px 6px; font-size:12px; }
+  h2 { scroll-margin-top: 80px; }
+  a.anchor { color:#818cf8; }
+  table { border-collapse: collapse; width:100%; }
+  th, td { border:1px solid #2a2f3d; padding:8px 10px; text-align:left; font-size:13px; vertical-align:top; }
+  th { background:#12141c; color:#c7d2fe; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:600; }
+  .badge-todo { background:#3b2f0b; color:#fcd34d; }
+  .badge-done { background:#0b3b23; color:#6ee7b7; }
+  .badge-note { background:#1e293b; color:#93c5fd; }
+</style>
+</head>
+<body class="max-w-5xl mx-auto p-8 leading-relaxed">
+
+<header class="mb-8">
+  <h1 class="text-3xl font-bold text-white">Agentic DAG — Code Flow Report</h1>
+  <p class="text-slate-400 mt-2">How a request travels from an HTTP endpoint, through the engine loop, into each node handler — and how the DAG decides what runs, what waits, and what is skipped.</p>
+  <p class="text-slate-500 text-sm mt-2">Audience: an engineer onboarding to the codebase. Companion to <code>ARCHITECTURE.md</code> (concepts) and <code>docs/LLD.md</code> (spec).</p>
+</header>
+
+<!-- NAV -->
+<nav class="card p-4 mb-8 text-sm">
+  <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
+    <a class="anchor" href="#concept">1. Concept & 3 paths</a>
+    <a class="anchor" href="#arch">2. Architecture map</a>
+    <a class="anchor" href="#router">3. API → engine router</a>
+    <a class="anchor" href="#loop">4. The step() loop</a>
+    <a class="anchor" href="#seq-run">5a. Sequence: full run</a>
+    <a class="anchor" href="#seq-approve">5b. Sequence: approval</a>
+    <a class="anchor" href="#seq-retry">5c. Sequence: retry/idempotency</a>
+    <a class="anchor" href="#deps">6. Dependencies & readiness</a>
+    <a class="anchor" href="#input">7. Dataflow (build_input)</a>
+    <a class="anchor" href="#api">8. API → function matrix</a>
+    <a class="anchor" href="#map">9. Code map</a>
+    <a class="anchor" href="#why">10. Non-obvious decisions</a>
+  </div>
+</nav>
+
+<!-- 1 -->
+<section id="concept" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">1. Concept & the 3 paths</h2>
+  <p>A run takes one support message and walks it through a graph of typed nodes. An LLM classifies it, a mock tool fetches account context, a branch routes it, one action runs, and a second LLM writes the reply. The whole run is persisted so it can be inspected, retried, or resumed.</p>
+  <div class="grid md:grid-cols-3 gap-3 mt-4">
+    <div class="card p-4"><b class="text-indigo-300">billing / bug</b><p class="text-slate-400 text-sm mt-1">label → the matching <code>tool</code> node runs, others skipped, <code>final</code> composes reply. Run <span class="pill badge-done">completed</span>.</p></div>
+    <div class="card p-4"><b class="text-amber-300">unclear</b><p class="text-slate-400 text-sm mt-1"><code>approval</code> node parks → run <span class="pill badge-note">awaiting_approval</span> until a human clicks Approve, then <code>final</code> runs.</p></div>
+    <div class="card p-4"><b class="text-red-300">failure</b><p class="text-slate-400 text-sm mt-1">bad LLM output or a tool error → node <span class="pill" style="background:#3b0b0b;color:#fca5a5">failed</span>, downstream blocked; Retry resumes.</p></div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="arch" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">2. Architecture map</h2>
+  <p class="text-slate-400 mb-3">Who calls whom. Everything persistent goes through <code>store.py</code> — the only SQL touchpoint.</p>
+  <div class="mermaid">
+graph TD
+  UI["Next.js debugger<br/>page.tsx"] -->|HTTP JSON| R["routers/runs.py<br/>(FastAPI endpoints)"]
+  R -->|await step| EX["engine/executor.py<br/>step() loop"]
+  EX -->|type → handler| REG["engine/registry.py"]
+  REG --> H["engine/handlers.py<br/>input · agent · branch · tool · approval"]
+  EX -->|deps_of · build_input · is_dag| G["engine/graph.py<br/>(pure functions)"]
+  H -->|classify| CL["agent/classify.py<br/>Groq LLM call"]
+  H -->|side-effect| MK["engine/mocks.py<br/>idempotent tools"]
+  H -->|schema-as-data| SC["engine/schemas.py<br/>build_model()"]
+  EX -->|read/write| ST["engine/store.py<br/>(ONLY SQL)"]
+  R -->|read/write| ST
+  ST --> DB[("SQLite<br/>5 tables")]
+  </div>
+</section>
+
+<!-- 3 -->
+<section id="router" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">3. The API → engine router</h2>
+  <p class="text-slate-400 mb-3">Every mutating endpoint does the same shape: <b>change one row, then call <code>step()</code>, then return the refreshed run.</b> That single pattern is what makes execute / retry / approve / reject all "just run the loop again".</p>
+  <div class="mermaid">
+flowchart LR
+  A["POST /runs/execute/{graph_id}"] -->|create run + node_runs| S["await step(run_id)"]
+  B["POST /nodes/{id}/retry<br/>(must be failed)"] -->|incr_attempts; failed→pending| S
+  C["POST /nodes/{id}/approve<br/>(must be awaiting_approval)"] -->|awaiting_approval→done; set reply| S
+  D["POST /nodes/{id}/reject"] -->|awaiting_approval→failed; set error| S
+  S --> RESP["_run_response()<br/>run + nodes + logs + edges"]
+  E["GET /runs/{id}"] --> RESP
+  F["GET /graphs/{id}"] --> DEF["latest version {nodes, edges}"]
+  </div>
+  <p class="text-slate-400 mt-3 text-sm">Preconditions are enforced with <code>409</code>: you can only retry a <code>failed</code> node, only approve/reject an <code>awaiting_approval</code> one.</p>
+</section>
+
+<!-- 4 -->
+<section id="loop" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">4. The heart: <code>step()</code></h2>
+  <p class="text-slate-400 mb-3">In <code>engine/executor.py</code>. Stateless and re-entrant: it re-reads every node from the DB on each pass, so it has no memory between calls. Retry and resume are not special — they just call this again.</p>
+  <pre>async def step(run_id, store):
+    edges = (await store.get_definition(run_id))["edges"]   # topology, loaded once
+    while True:
+        nodes  = await store.get_nodes(run_id)              # fresh every pass
+        by_key = {n.node_key: n for n in nodes}
+        ready  = [n for n in nodes
+                  if n.status == "pending"
+                  and all(by_key[d].status in ("done","skipped")   # deps resolved?
+                          for d in deps_of(n.node_key, edges))]
+        if not ready: break
+        for n in ready:
+            inp = build_input(n.node_key, edges, by_key)    # pull upstream outputs
+            await store.set_input(n.id, inp)
+            await store.set_status(n.id, "running")
+            try:
+                out   = await REGISTRY[n.type](n, inp, store)  # dispatch to handler
+                fresh = await store.get_node(n.id)
+                if fresh.status == "running":               # handler didn't park/skip
+                    if out is not None: await store.set_output(n.id, out)
+                    await store.set_status(n.id, "done")
+            except Exception as e:
+                await store.set_error(n.id, str(e))
+                await store.set_status(n.id, "failed")
+    await reconcile_run_status(run_id, store)               # derive run-level status</pre>
+  <p class="text-slate-400 mt-3 text-sm"><b>reconcile_run_status</b>: any node <code>failed</code> → run <b>failed</b>; else any <code>awaiting_approval</code> → run <b>awaiting_approval</b>; else all resolved → <b>completed</b>; else <b>running</b>.</p>
+  <p class="text-slate-400 mt-2 text-sm"><b>Why the <code>if fresh.status == "running"</code> check?</b> A handler can change its own status (approval parks itself as <code>awaiting_approval</code>; branch marks others <code>skipped</code>). The loop only auto-completes a node it left running — it never overrides a handler's decision.</p>
+</section>
+
+<!-- 5a -->
+<section id="seq-run" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">5a. Sequence — a full billing run</h2>
+  <div class="mermaid">
+sequenceDiagram
+  participant UI
+  participant API as runs.py
+  participant EX as step loop
+  participant H as handlers
+  participant LLM as Groq
+  participant DB as store/SQLite
+  UI->>API: POST /runs/execute + text
+  API->>DB: create run + 8 node_runs, all pending
+  API->>EX: step run_id
+  EX->>DB: get_definition edges
+  Note over EX: pass 1 ready is input
+  EX->>H: input_handler
+  H-->>EX: text + request
+  Note over EX: pass 2 ready is classify + fetch_context
+  EX->>H: agent_handler classify
+  H->>LLM: classify text
+  LLM-->>H: label billing
+  H-->>EX: validated label + reply
+  EX->>H: tool_handler fetch_context
+  H-->>EX: account + customer
+  Note over EX: pass 3 ready is branch
+  EX->>H: branch_handler
+  H->>DB: set bug skipped, approval skipped
+  Note over EX: pass 4 ready is billing
+  EX->>H: tool_handler invoice
+  H->>DB: set_output then return
+  Note over EX: pass 5 ready is final
+  EX->>H: agent_handler final compose
+  H->>LLM: compose reply from context
+  LLM-->>H: reply text
+  EX->>DB: reconcile to completed
+  API-->>UI: run + nodes + logs + edges
+  </div>
+</section>
+
+<!-- 5b -->
+<section id="seq-approve" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">5b. Sequence — approval pause &amp; resume</h2>
+  <p class="text-slate-400 mb-3 text-sm">Note the run <b>stops mid-graph</b> and returns. Nothing re-runs on resume — <code>step()</code> picks up exactly where it stopped.</p>
+  <div class="mermaid">
+sequenceDiagram
+  participant UI
+  participant API as runs.py
+  participant EX as step loop
+  participant H as approval_handler
+  participant DB as store
+  UI->>API: execute text hello, classified unclear
+  API->>EX: step
+  Note over EX: input, classify, fetch_context, branch all run
+  EX->>H: approval_handler
+  H->>DB: set status awaiting_approval
+  H-->>EX: return None, does not complete
+  Note over EX: no more ready nodes, loop ends
+  EX->>DB: reconcile to awaiting_approval
+  API-->>UI: run paused, final still pending
+  UI->>API: POST /nodes/approve
+  API->>DB: approval to done, set_output reply
+  API->>EX: step again
+  Note over EX: final deps now resolved, final runs
+  EX->>DB: reconcile to completed
+  API-->>UI: run completed
+  </div>
+</section>
+
+<!-- 5c -->
+<section id="seq-retry" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">5c. Sequence — retry &amp; idempotency</h2>
+  <p class="text-slate-400 mb-3 text-sm">A tool "crashes" after firing its side-effect but before output is saved. The retry must NOT fire it twice.</p>
+  <div class="mermaid">
+sequenceDiagram
+  participant UI
+  participant API as runs.py
+  participant EX as step loop
+  participant H as tool_handler
+  participant MK as mocks
+  participant DB as store
+  UI->>API: execute
+  API->>EX: step
+  EX->>H: tool_handler
+  H->>MK: create with idem_key run:node
+  MK->>MK: record key, then raise crash_after
+  H-->>EX: exception
+  EX->>DB: node failed, output NOT saved
+  API-->>UI: run failed
+  UI->>API: POST /nodes/retry
+  API->>DB: attempts plus one, failed to pending
+  API->>EX: step
+  EX->>H: tool_handler again
+  H->>MK: create with same idem_key
+  MK-->>H: key already seen, replay, no new effect
+  H->>DB: set_output, node done
+  EX->>DB: reconcile to completed
+  Note over MK: created_count is 1, exactly one side-effect
+  </div>
+</section>
+
+<!-- 6 -->
+<section id="deps" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">6. How dependencies are marked (they aren't stored)</h2>
+  <p class="text-slate-400 mb-3">There is no "dependencies" column anywhere. A node's deps are <b>derived from the edge list every time</b> in <code>graph.py</code>:</p>
+  <pre>def deps_of(node_key, edges):
+    return [e["source"] for e in edges if e["target"] == node_key]   # incoming edges' sources</pre>
+  <p class="text-slate-400 mt-3">A node is <b>ready</b> when <code>status == "pending"</code> AND every dep is in <code>("done", "skipped")</code>. Treating <code>skipped</code> as resolved is the trick that lets a join node fire off one live path:</p>
+  <div class="mermaid">
+graph LR
+  cl[classify done] --> br[branch done]
+  fc[fetch_context done] --> br
+  br -->|label=billing| bi[billing done]
+  br -.->|skipped| bug[bug skipped]
+  br -.->|skipped| ap[approval skipped]
+  bi --> fin[final ready ✔]
+  bug -.-> fin
+  ap -.-> fin
+  </div>
+  <p class="text-slate-400 mt-3 text-sm"><b>branch_handler</b> is what sets the skips: for each outgoing edge whose <code>condition ≠ label</code>, it calls <code>store.set_status(target, "skipped")</code>. Cycle safety is checked once at seed time with <code>is_dag()</code> (Kahn's algorithm).</p>
+</section>
+
+<!-- 7 -->
+<section id="input" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">7. How data flows into a node (<code>build_input</code>)</h2>
+  <p class="text-slate-400 mb-3">Edges carry data, not just order. Each edge names a <code>sourceHandle</code> (a key in the upstream output) and a <code>targetHandle</code> (where to place it in this node's input).</p>
+  <pre>def build_input(node_key, edges, nodes_by_key):
+    inp = {}
+    for e in edges:
+        if e["target"] == node_key:
+            up  = nodes_by_key.get(e["source"])
+            out = (up.output_json or {}) if up else {}
+            inp[e["targetHandle"]] = out.get(e["sourceHandle"])   # skipped upstream → None
+    return inp</pre>
+  <p class="text-slate-400 mt-3 text-sm">Example — <code>final</code>'s input is assembled from 5 edges, giving the compose-agent full context (losing branches are <code>null</code>):</p>
+  <pre>{ "label": "billing",
+  "account": {"id":"ACC-42","plan":"pro"},
+  "bug_result": null,
+  "billing_result": "Checked your invoice ...",
+  "approval_result": null }</pre>
+</section>
+
+<!-- 8 -->
+<section id="api" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">8. API → function matrix</h2>
+  <table>
+    <tr><th>Endpoint</th><th>Router fn</th><th>What it does, step by step</th></tr>
+    <tr><td><code>GET /graphs</code></td><td>list_graphs</td><td><code>store.list_graphs()</code> → id/name/version list.</td></tr>
+    <tr><td><code>GET /graphs/{id}</code></td><td>get_graph</td><td><code>get_latest_version</code> → returns <code>{nodes, edges}</code> so the UI draws the skeleton before any run.</td></tr>
+    <tr><td><code>POST /runs/execute/{graph_id}</code></td><td>execute</td><td><code>get_latest_version</code> → <code>create_run</code> → <code>create_node</code> ×N → <code>step()</code> → return run.</td></tr>
+    <tr><td><code>GET /runs/{id}</code></td><td>get_run</td><td><code>store.get_run</code> (nodes + logs eager-loaded) + edges from definition.</td></tr>
+    <tr><td><code>POST /nodes/{id}/retry</code></td><td>retry</td><td>409 unless <code>failed</code> → <code>incr_attempts</code> → <code>set_status(pending)</code> → <code>step()</code>.</td></tr>
+    <tr><td><code>POST /nodes/{id}/approve</code></td><td>approve</td><td>409 unless <code>awaiting_approval</code> → <code>set_status(done)</code> → <code>set_output(reply)</code> → <code>step()</code>.</td></tr>
+    <tr><td><code>POST /nodes/{id}/reject</code></td><td>reject</td><td>409 unless <code>awaiting_approval</code> → <code>set_status(failed)</code> → <code>set_error(reason)</code> → <code>step()</code> (reconciles run → failed).</td></tr>
+  </table>
+  <h3 class="text-lg font-semibold text-white mt-5 mb-2">Handlers (dispatched by <code>step()</code>)</h3>
+  <table>
+    <tr><th>type</th><th>handler</th><th>Behaviour</th></tr>
+    <tr><td>input</td><td>input_handler</td><td>If it has resolved input → pass it through; else seed from <code>run.request</code> (entry node).</td></tr>
+    <tr><td>agent</td><td>agent_handler</td><td><code>classify(text or json(inp))</code> → build validator via <code>model_for(config)</code> → <code>model_validate_json</code>; invalid → raise → failed.</td></tr>
+    <tr><td>branch</td><td>branch_handler</td><td>Skip every outgoing edge whose <code>condition ≠ label</code>; return <code>{label}</code>.</td></tr>
+    <tr><td>tool</td><td>tool_handler</td><td>If output already saved → replay. Else set idem key, call mock (with fault knobs), <b>persist before return</b>.</td></tr>
+    <tr><td>approval</td><td>approval_handler</td><td>Set self <code>awaiting_approval</code>, return <code>None</code> → loop halts.</td></tr>
+  </table>
+</section>
+
+<!-- 9 -->
+<section id="map" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">9. Code map — where to look</h2>
+  <pre>api/
+  routers/runs.py     ← START HERE. All HTTP endpoints; each ends with step().
+  engine/
+    executor.py       step() loop + reconcile_run_status   (the engine)
+    graph.py          deps_of · outgoing_edges · is_dag · build_input   (pure, no DB)
+    handlers.py       the 5 handlers (input/agent/branch/tool/approval)
+    registry.py       type → handler map
+    store.py          the ONLY file with SQL (create_run, get_nodes, set_status, ...)
+    schemas.py        build_model(): JSON schema → Pydantic validator at runtime
+    mocks.py          fake Linear/invoice/context; idempotent; fault knobs for tests
+    seed.py           loads seeds/support_graph.json on startup (idempotent by name)
+  agent/classify.py   the Groq (Llama 3.3 70B) call
+  models.py           5 SQLAlchemy tables
+  seeds/support_graph.json   the 8-node workflow definition
+client/src/
+  app/page.tsx        graph canvas + node inspector + traversal animation
+  lib/api.ts          typed fetch helpers</pre>
+</section>
+
+<!-- 10 -->
+<section id="why" class="card p-6 mb-8">
+  <h2 class="text-xl font-semibold text-white mb-3">10. Non-obvious decisions</h2>
+  <ul class="space-y-3 text-slate-300">
+    <li><span class="pill badge-note">stateless step()</span> No queue, no worker, no daemon. <code>step()</code> runs inline inside the HTTP request. A run "pauses" simply because nobody is calling <code>step()</code>. This makes retry = resume = "call the loop again".</li>
+    <li><span class="pill badge-note">deps from edges</span> Dependencies are never stored — always derived from the edge list. Editing a graph can't corrupt an in-flight run (and the run pins its own graph version).</li>
+    <li><span class="pill badge-note">skipped = resolved</span> Branching marks losing paths <code>skipped</code> instead of deleting nodes. Readiness treats skipped like done, so join nodes still fire — and the whole run stays inspectable/recoverable.</li>
+    <li><span class="pill badge-note">persist before return</span> A tool saves its output to the DB <i>before</i> the handler returns. Combined with the mock's idempotency-key dedupe, a crash mid-side-effect still yields exactly one effect on retry.</li>
+    <li><span class="pill badge-note">schema-as-data</span> An agent node's expected output is JSON in its <code>config</code>, turned into a Pydantic validator at runtime. Change a node's contract by editing the graph, not Python. Validation happens <b>before</b> any downstream node runs.</li>
+    <li><span class="pill badge-note">fault knobs in mocks</span> <code>fail_until</code> / <code>crash_after_create</code> live in <code>mocks.py</code>, not handlers. Retry/idempotency tests exercise real code paths — no stubs, no monkeypatching.</li>
+  </ul>
+</section>
+
+<footer class="text-slate-500 text-xs text-center py-6">Generated code-flow report · matches current source · see ARCHITECTURE.md for concepts, docs/LLD.md for spec.</footer>
+
+</body>
+</html>

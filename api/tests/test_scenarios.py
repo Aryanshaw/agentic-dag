@@ -73,6 +73,8 @@ async def test_scenario_branching(client, db):
     ).json()
     nodes = _by_key(body)
     assert nodes["classify"]["output"]["label"] == "billing"
+    assert nodes["fetch_context"]["status"] == "done"  # runs on every path, never skipped
+    assert nodes["fetch_context"]["output"]["account"]["id"] == "ACC-42"
     assert nodes["billing"]["status"] == "done"
     assert nodes["bug"]["status"] == "skipped"
     assert nodes["approval"]["status"] == "skipped"

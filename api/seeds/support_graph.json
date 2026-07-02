@@ -17,7 +17,14 @@
     { "key": "bug", "type": "tool", "config": { "tool": "linear" } },
     { "key": "billing", "type": "tool", "config": { "tool": "invoice" } },
     { "key": "approval", "type": "approval" },
-    { "key": "final", "type": "input" }
+    {
+      "key": "final",
+      "type": "agent",
+      "config": {
+        "output_schema": { "reply": { "type": "str", "required": true } },
+        "prompt": "You are a senior customer-support agent. You will receive a JSON summary of an automated triage run: the classification `label`, the customer's `account` context, and the result of whichever single action ran (bug ticket, invoice check, or human-approval routing) — unused branches are null. Write one warm, concise reply to the customer grounded in that context. Respond ONLY with JSON of the form {\"reply\": \"...\"}."
+      }
+    }
   ],
   "edges": [
     { "source": "input", "target": "classify", "sourceHandle": "text", "targetHandle": "text" },
@@ -31,8 +38,10 @@
     { "source": "branch", "target": "approval", "sourceHandle": "label", "targetHandle": "label", "condition": "unclear" },
     { "source": "input", "target": "bug", "sourceHandle": "text", "targetHandle": "text" },
     { "source": "input", "target": "billing", "sourceHandle": "text", "targetHandle": "text" },
-    { "source": "bug", "target": "final", "sourceHandle": "reply", "targetHandle": "reply" },
-    { "source": "billing", "target": "final", "sourceHandle": "reply", "targetHandle": "reply" },
-    { "source": "approval", "target": "final", "sourceHandle": "reply", "targetHandle": "reply" }
+    { "source": "classify", "target": "final", "sourceHandle": "label", "targetHandle": "label" },
+    { "source": "fetch_context", "target": "final", "sourceHandle": "account", "targetHandle": "account" },
+    { "source": "bug", "target": "final", "sourceHandle": "reply", "targetHandle": "bug_result" },
+    { "source": "billing", "target": "final", "sourceHandle": "reply", "targetHandle": "billing_result" },
+    { "source": "approval", "target": "final", "sourceHandle": "reply", "targetHandle": "approval_result" }
   ]
 }

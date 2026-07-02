@@ -6,6 +6,8 @@ Phase 2 ships `input`; branch/tool/approval land in Phase 3, agent in Phase 4.
 
 from __future__ import annotations
 
+import json
+
 from pydantic import ValidationError
 
 from agent.classify import classify
@@ -16,19 +18,29 @@ from models import NodeRun
 
 
 async def input_handler(node: NodeRun, inp: dict, store) -> dict:
-    """Entry node: seeds shared state from the run's request. Always done.
+    """Entry/pass-through node.
 
-    Output spreads the request so downstream edges can pull fields by handle
-    (e.g. sourceHandle "text"), and keeps a `request` key for the whole payload.
+    Entry node (no incoming edges → empty inp): seed shared state from the run's
+    request, spreading it so downstream edges can pull fields by handle (e.g.
+    sourceHandle "text"). Any other input-typed node (e.g. `final`) passes its
+    resolved upstream input straight through, so it surfaces the winning branch's
+    reply instead of re-echoing the request.
     """
+    if inp:
+        return inp
     run = await store.get_run(node.run_id)
     req = run.request if isinstance(run.request, dict) else {"value": run.request}
     return {**req, "request": run.request}
 
 
 async def agent_handler(node: NodeRun, inp: dict, store) -> dict:
-    """LLM classify → Pydantic-validate BEFORE returning. Invalid → raise → failed."""
-    text = inp.get("text") or ""
+    """LLM call → Pydantic-validate BEFORE returning. Invalid → raise → failed.
+
+    A classifier node reads inp["text"]; a compose node (e.g. `final`) has no
+    "text" but a bag of upstream results — hand the whole resolved input to the
+    model as JSON so it can write a reply from the run's context.
+    """
+    text = inp.get("text") or json.dumps(inp)
     raw = await classify(text, node.config.get("prompt"))
     await store.log(node.id, "info", "agent raw output", {"raw": raw})
     schema = model_for(node.config)  # data-driven: node's own output_schema, or default
